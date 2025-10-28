@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>DC Fan Fault Detection</title>
+
+  <!-- Fonts / Bootstrap / Chart.js -->
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <!-- Firebase compat (simple namespaced style to avoid module import issues) -->
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"></script>
+
+  <!-- Icons -->
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+
+  <!-- Simple styles (you may keep your style.css instead) -->
+  <link rel="stylesheet" href="style.css">
+  <style>
+    :root{--bg:#f5f7fb;--card:#fff;--muted:#6b7280;--accent-1:#4f46e5;--accent-2:#7c3aed;--text:#0f172a}
+    body{font-family:Poppins,Segoe UI,Arial,sans-serif;margin:0;background:linear-gradient(135deg,var(--bg),#fff);color:var(--text);display:flex;height:100vh;overflow:hidden}
+    .sidebar{width:240px;background:#111827;color:#fff;padding:18px;display:flex;flex-direction:column;justify-content:space-between}
+    .main{flex:1;padding:24px;overflow:auto}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:18px;width:100%;margin-top:8px}
+    .fan-card{display:flex;gap:14px;padding:16px;border-radius:12px;background:var(--card);align-items:center;box-shadow:0 6px 20px rgba(2,6,23,0.06)}
+    .fan-visual{width:82px;height:82px;border-radius:10px;display:flex;align-items:center;justify-content:center;background:linear-gradient(180deg, rgba(79,70,229,0.06), rgba(124,58,237,0.03))}
+    .fan-svg{width:56px;height:56px;transform-origin:center}
+    .fan-running .fan-svg{animation:spin 1s linear infinite}
+    @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+    .fan-info{flex:1;display:flex;flex-direction:column;gap:8px}
+    .progress-bar{height:10px;background:#eef2ff;border-radius:8px;overflow:hidden}
+    .progress-bar-inner{height:100%;background:linear-gradient(90deg,var(--accent-1),var(--accent-2));width:0%;transition:width .6s}
+    .chart-card{background:var(--card);border-radius:12px;padding:12px;box-shadow:0 10px 30px rgba(2,6,23,0.04)}
+    .alerts-list{display:flex;flex-direction:column;gap:10px;margin-top:8px}
+    .muted{color:var(--muted)}
+    .badge{padding:8px 10px;border-radius:8px;background:#eaefff;color:#111827;font-weight:700}
+    .page{display:none}
+    .page.active{display:block}
+  </style>
+</head>
+<body class="light">
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div>
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
+        <div style="font-size:24px">🌀</div>
+        <div style="font-weight:700;font-size:18px">DC Fan Monitor</div>
+      </div>
+      <nav class="nav" style="display:flex;flex-direction:column;gap:6px">
+        <div class="nav-item active" data-page="dashboard" style="padding:10px 12px;border-radius:8px;cursor:pointer;color:rgba(255,255,255,0.92);font-weight:600"><i class="fa-solid fa-house"></i> Dashboard</div>
+        <div class="nav-item" data-page="fan-details" style="padding:10px 12px;border-radius:8px;cursor:pointer;color:rgba(255,255,255,0.92);font-weight:600"><i class="fa-solid fa-circle-info"></i> Fan Details</div>
+        <div class="nav-item" data-page="alerts" style="padding:10px 12px;border-radius:8px;cursor:pointer;color:rgba(255,255,255,0.92);font-weight:600"><i class="fa-solid fa-bell"></i> Alerts</div>
+        <div class="nav-item" data-page="model-settings" style="padding:10px 12px;border-radius:8px;cursor:pointer;color:rgba(255,255,255,0.92);font-weight:600"><i class="fa-solid fa-gear"></i> Model Settings</div>
+      </nav>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:6px">
+      <button id="themeToggle" class="btn btn-ghost" style="background:transparent;border:1px solid rgba(255,255,255,0.06);padding:8px;border-radius:8px;color:#fff;cursor:pointer">🌗 Toggle Theme</button>
+      <small class="muted">v1.0 • Local</small>
+    </div>
+  </aside>
+   
+  <div class="control-row">
+  <button class="btn small power">Power</button>
+  <input type="range" min="0" max="255" value="128" class="speed-slider">
+  <span class="speed-label">Speed: 128</span>
+</div>
+
+
+  <!-- MAIN -->
+  <main class="main">
+    <!-- DASHBOARD -->
+    <section id="dashboard" class="page active">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <h1 style="margin:0">Dashboard</h1>
+        <div style="display:flex;gap:10px;align-items:center">
+          <span id="connBadge" class="badge">Backend: checking...</span>
+          <span id="fbBadge" class="badge muted">Firebase: -</span>
+        </div>
+      </div>
+
+      <p id="backend-status" class="muted">⏳ Waiting for live data…</p>
+
+      <div id="fans-grid" class="grid"></div>
+
+      <section class="chart-area" style="margin-top:18px">
+        <h3>Sensor Chart</h3>
+        <div class="chart-card">
+          <canvas id="sensorChart"></canvas>
+        </div>
+      </section>
+
+      <h3 style="margin-top:18px">Alerts</h3>
+      <ul id="alerts-list" class="alerts-list"></ul>
+    </section>
+    
+
+      <!-- SCRIPT -->
+  <script>
+
+
+
+  // ===============================
+  // 🔮 Predict Fan Fault Section
+  // ===============================
+  document.addEventListener("DOMContentLoaded", () => {
+    const predictBtn = document.getElementById("predictBtn");
+    const vibrationInput = document.getElementById("vibrationInput");
+    const currentInput = document.getElementById("currentInput");
+    const predictMsg = document.getElementById("predictMsg");
+
+    predictBtn.addEventListener("click", async () => {
+        const vib = parseFloat(vibrationInput.value);
+        const curr = parseFloat(currentInput.value);
+
+        if (isNaN(vib) || isNaN(curr)) {
+            predictMsg.textContent = "⚠️ Please enter valid numeric values.";
+            predictMsg.style.color = "red";
+            return;
+        }
+
+    }); 
+
+}); 
+
+
+  </script>
+</body>
+</html>
+
+
+    <!-- FAN DETAILS -->
+    <section id="fan-details" class="page">
+      <header><h1>Fan Details</h1></header>
+      <div id="fanDetailCards"></div>
+    </section>
+
+    <!-- ALERTS -->
+    <section id="alerts" class="page">
+      <header><h1>Alerts & Login History</h1></header>
+      <ul id="alertsListPage" class="alerts-list"></ul>
+    </section>
+
+    <!-- MODEL SETTINGS -->
+    <section id="model-settings" class="page">
+      <header><h1>Model Settings</h1></header>
+      <div class="card settings-card" style="padding:14px;border-radius:12px;background:var(--card)">
+        <label class="form-label">Upload dataset (CSV)</label>
+        <input type="file" id="modelDatasetUpload" accept=".csv" class="form-control mb-2">
+        <div style="margin-top:8px">
+          <button id="trainModelBtn" class="btn primary" style="background:linear-gradient(90deg,var(--accent-1),var(--accent-2));color:#fff;padding:8px 12px;border-radius:8px;border:none;font-weight:700">Train Model</button>
+          <span id="modelMessage" class="upload-message" style="margin-left:10px;font-weight:700"></span>
+          <table id="dataPreview" border="1" style="margin-top:10px;"></table>
+
+
+
+
+           <!-- 🔮 Predict Fault Section -->
+<div style="margin-top:20px;">
+  <h3>🔮 Predict Fan Fault</h3>
+  <input id="vibrationInput" type="number" placeholder="Enter Vibration" step="any" style="padding:6px; margin:4px;">
+  <input id="currentInput" type="number" placeholder="Enter Current" step="any" style="padding:6px; margin:4px;">
+  <label>Speed:</label>
+<input type="number" id="speedInput" placeholder="Enter Speed">
+
+  <button id="predictBtn" class="btn secondary" style="background:linear-gradient(90deg,#00c6ff,#0072ff);color:#fff;padding:8px 12px;border:none;border-radius:8px;">Predict</button>
+  <p id="predictMsg" style="margin-top:10px;font-weight:600;"></p>
+</div>
+
+
+
+        </div>
+        <div id="highestRecordContainer" style="margin-top:12px"></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- SCRIPT -->
+  <script>
+ 
+  // ===============================
+  // ⚙️ create fan cards (6)
+  // ===============================
+  const fanCount = 6;
+  const fansGrid = document.getElementById('fans-grid');
+  for (let i = 1; i <= fanCount; i++) {
+    fansGrid.innerHTML += `
+      <div class="fan-card fan-running" id="fan-${i}">
+        <div class="fan-visual">
+          <svg class="fan-svg" viewBox="0 0 100 100">
+            <circle cx="50" cy="50" r="10" fill="#4f46e5"/>
+            <path d="M50 10 L58 30 L42 30 Z" fill="#4f46e5"/>
+            <path d="M90 50 L70 58 L70 42 Z" fill="#4f46e5"/>
+            <path d="M50 90 L42 70 L58 70 Z" fill="#4f46e5"/>
+            <path d="M10 50 L30 42 L30 58 Z" fill="#4f46e5"/>
+          </svg>
+        </div>
+        <div class="fan-info">
+          <h3 class="fan-title">Fan ${i}</h3>
+          <div class="fan-status" id="fan-status-${i}">Waiting for data...</div>
+          <div class="progress-bar"><div class="progress-bar-inner" id="fan-speed-${i}" style="width:0%"></div></div>
+          <div class="muted" id="fan-info-${i}">Vib: - | Curr: - | Temp: -</div>
+        </div>
+      </div>`;
+  }
+
+  // ===============================
+  // 📊 Sensor Chart
+  // ===============================
+  const ctx = document.getElementById('sensorChart').getContext('2d');
+  const sensorChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: ['Fan 1','Fan 2','Fan 3','Fan 4','Fan 5','Fan 6'],
+      datasets: [
+        { label: 'Vibration (g)', data: [0,0,0,0,0,0], borderColor: '#4f46e5', backgroundColor: 'rgba(79,70,229,0.08)', fill: true, tension: 0.3 },
+        { label: 'Current (A)', data: [0,0,0,0,0,0], borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,0.06)', fill: true, tension: 0.3 },
+      ]
+    },
+    options: {
+      responsive: true,
+      animation: false,
+      plugins: { legend: { position: 'bottom' } },
+      scales: { y: { beginAtZero: true } }
+    }
+  });
+
+  // ===============================
+  // Alerts + Login History
+  // ===============================
+  const alertsList = document.getElementById("alerts-list");
+  const alertsListPage = document.getElementById("alertsListPage");
+  let loginHistory = [];
+
+  function pushAlert(msg) {
+    const item = `<li style="background:var(--card);padding:10px;border-radius:8px;box-shadow:0 6px 18px rgba(2,6,23,0.04)">${new Date().toLocaleTimeString()} — ${msg}</li>`;
+    alertsList.innerHTML = item + alertsList.innerHTML;
+    if (alertsListPage) alertsListPage.innerHTML = item + alertsListPage.innerHTML;
+  }
+
+  function addLoginHistory(user) {
+    const entry = { user, time: new Date().toLocaleString() };
+    loginHistory.push(entry);
+    pushAlert(`👤 ${user} logged in at ${entry.time}`);
+  }
+
+// ===============================
+// Upload + Train buttons
+// ===============================
+// ===============================
+// Fan Details
+// ===============================
+function updateFanDetails(data) {
+  const detailContainer = document.getElementById("fanDetailCards");
+  detailContainer.innerHTML = "";
+  data.forEach((fan, i) => {
+    detailContainer.innerHTML += `
+      <div class="card mb-3">
+        <div class="card-body">
+          <h5>Fan ${i + 1}</h5>
+          <p>Vibration: ${fan.vib}g</p>
+          <p>Current: ${fan.curr}A</p>
+          <p>Speed: ${fan.speed ? fan.speed + '%' : '—'}</p>
+        </div>
+      </div>`;
+  });
+}
+
+// ===============================
+// Upload + Train Buttons
+// ===============================
+document.addEventListener("DOMContentLoaded", () => {
+  const uploadInput = document.getElementById("datasetUpload");
+  const uploadBtn = document.getElementById("uploadBtn");
+  const trainBtn = document.getElementById("trainBtn");
+  const uploadMessage = document.getElementById("uploadMessage");
+  const trainMessage = document.getElementById("trainMessage");
+
+  let uploadedData = [];
+
+  // ===============================
+  // Handle Dataset Upload
+  // ===============================
+  uploadBtn.addEventListener("click", () => {
+    const file = uploadInput.files[0];
+    if (!file) {
+      uploadMessage.textContent = "⚠️ Please select a CSV file first.";
+      uploadMessage.style.color = "red";
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target.result.trim();
+      const rows = text.split("\n").map((r) => r.split(","));
+      const headers = rows[0].map((h) => h.trim());
+
+      // Validate expected column headers
+      if (
+        !headers.includes("Vibration") ||
+        !headers.includes("Current") ||
+        !headers.includes("Fault")
+      ) {
+        uploadMessage.textContent =
+          "❌ Error: Expected columns ['Vibration','Current','Fault']";
+        uploadMessage.style.color = "red";
+        return;
+      }
+
+      // Parse and store uploaded data
+      uploadedData = rows.slice(1).map((r) => ({
+        vib: parseFloat(r[0]),
+        curr: parseFloat(r[1]),
+        fault: r[2],
+        speed: Math.floor(Math.random() * 100) // temporary value for speed display
+      }));
+
+      uploadMessage.textContent = `✅ Dataset loaded successfully: ${uploadedData.length} records`;
+      uploadMessage.style.color = "green";
+    };
+
+    reader.readAsText(file);
+  });
+
+  // ===============================
+  // Handle Model Training
+  // ===============================
+  trainBtn.addEventListener("click", () => {
+    if (!uploadedData.length) {
+      trainMessage.textContent = "⚠️ Please upload data first.";
+      trainMessage.style.color = "red";
+      return;
+    }
+
+    // Simple mock “training” example
+    const maxVib = Math.max(...uploadedData.map((d) => d.vib));
+    const maxCurr = Math.max(...uploadedData.map((d) => d.curr));
+
+    trainMessage.textContent = `✅ Training complete. 
+      Max Vibration: ${maxVib.toFixed(2)}, 
+      Max Current: ${maxCurr.toFixed(2)}`;
+    trainMessage.style.color = "green";
+
+    // Update fan details on screen
+    updateFanDetails(uploadedData);
+  });
+});
+
+
+// ===============================
+// Simulate fetchData (replace with ESP32 / backend fetch later)
+// ===============================
+async function fetchData() {
+  // Simulated dataset (replace with real fetch from ESP32 or backend)
+  const data = [
+    { vib: 0.12, curr: 1.8, temp: 45, speed: 60 },
+    { vib: 0.15, curr: 2.1, temp: 47, speed: 55 },
+    { vib: 0.09, curr: 1.7, temp: 44, speed: 70 },
+    { vib: 0.18, curr: 2.3, temp: 52, speed: 40 },
+    { vib: 0.11, curr: 1.9, temp: 46, speed: 65 },
+    { vib: 0.13, curr: 2.0, temp: 48, speed: 58 },
+  ];
+
+  // Update UI
+  data.forEach((fan, i) => {
+    const id = i + 1;
+    const speedEl = document.getElementById(`fan-speed-${id}`);
+    const infoEl = document.getElementById(`fan-info-${id}`);
+    const statusEl = document.getElementById(`fan-status-${id}`);
+
+    if (speedEl && infoEl && statusEl) {
+      speedEl.style.width = `${fan.speed}%`;
+      infoEl.textContent = `Vib: ${fan.vib}g | Curr: ${fan.curr}A | Temp: ${fan.temp}°C`;
+      statusEl.textContent =
+        fan.temp > 50 ? "⚠️ Warning • High Temp" : "Running • Normal";
+      const card = document.getElementById(`fan-${id}`);
+      card.className =
+        "fan-card " + (fan.temp > 50 ? "fan-warning" : "fan-running");
+    }
+  });
+
+  // Update details page
+  updateFanDetails(data);
+
+  // Update chart 
+  if (window.sensorChart) {
+    sensorChart.data.datasets[0].data = data.map((f) => f.vib);
+    sensorChart.data.datasets[1].data = data.map((f) => f.curr);
+    sensorChart.data.datasets[2].data = data.map((f) => f.temp);
+    sensorChart.update();
+  }
+
+  // Firebase 
+  if (typeof window.saveDataToFirebase === "function") {
+    try {
+      const simplified = data.map((d, idx) => ({
+        fan: idx + 1,
+        vib: d.vib,
+        curr: d.curr,
+        temp: d.temp,
+        speed: d.speed,
+      }));
+      await window.saveDataToFirebase(simplified);
+    } catch (err) {
+      console.error("Firebase save error:", err);
+    }
+  }
+}
+
+setInterval(fetchData, 2000);
+fetchData();
+
+
+  // ===============================
+  // Navigation
+  // ===============================
+  const navItems = document.querySelectorAll('.nav-item');
+  const pages = document.querySelectorAll('.page');
+  navItems.forEach(item => {
+    item.addEventListener('click', () => {
+      navItems.forEach(i => i.classList.remove('active'));
+      item.classList.add('active');
+      const pageId = item.getAttribute('data-page');
+      pages.forEach(p => p.classList.remove('active'));
+      document.getElementById(pageId).classList.add('active');
+    });
+  });
+
+  // ===============================
+  // Theme toggle
+  // ===============================
+  const themeToggle = document.getElementById('themeToggle');
+  themeToggle.addEventListener('click', () => {
+    document.body.classList.toggle('dark');
+    localStorage.setItem('theme', document.body.classList.contains('dark') ? 'dark' : 'light');
+  });
+  if (localStorage.getItem('theme') === 'dark') document.body.classList.add('dark');
+
+  // example login entry
+  addLoginHistory("Admin");
+
+  // ===============================
+  // Model training (upload CSV)
+  // ===============================
+  // ===============================
+// Train Model + CSV Preview
+// ===============================
+
+// Elements
+const trainBtn = document.getElementById('trainModelBtn');
+const datasetUpload = document.getElementById('modelDatasetUpload');
+const modelMsg = document.getElementById('modelMessage');
+const highestRecordContainer = document.getElementById('highestRecordContainer');
+const dataPreviewTable = document.getElementById('dataPreview');
+
+let modelData = [];
+
+// ===============================
+// Parse CSV helper function
+// ===============================
+function parseCSV(csvText) {
+  const lines = csvText.trim().split('\n');
+  const headers = lines[0].split(',').map(h => h.trim());
+  return lines.slice(1).map(line => {
+    const values = line.split(',').map(v => v.trim());
+    const obj = {};
+    headers.forEach((h, i) => obj[h] = values[i] ?? '');
+    return obj;
+  });
+}
+
+// ===============================
+// Handle CSV Upload
+// ===============================
+datasetUpload.addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = evt => {
+    const text = evt.target.result;
+    modelData = parseCSV(text);
+
+
+    // ✅ Save dataset to Firebase
+  if (typeof window.saveDataToFirebase === "function") {
+    modelData.forEach(row => {
+      window.saveDataToFirebase(row, "readings");
+    });
+  }
+
+    // Show message
+    modelMsg.textContent = `✅ Dataset loaded: ${modelData.length} records`;
+    modelMsg.style.color = 'green';
+
+    // Preview first 10 rows
+    const rows = text.trim().split("\n").slice(0, 10);
+    // Professional table style
+dataPreviewTable.innerHTML = `
+  <thead style="background:#0a3d62;color:white;">
+    <tr>${rows[0].split(",").map(h => `<th style='padding:8px;text-align:left;border-bottom:2px solid #eee;'>${h}</th>`).join("")}</tr>
+  </thead>
+  <tbody>
+    ${rows.slice(1).map(r => `
+      <tr style="background:#fff;transition:0.2s;">
+        ${r.split(",").map(v => `<td style='padding:8px;border-bottom:1px solid #eee;'>${v}</td>`).join("")}
+      </tr>`).join("")}
+  </tbody>
+`;
+
+// Add hover effect
+const style = document.createElement("style");
+style.textContent = `
+  #dataPreview tr:hover {
+    background: #f1f3f5 !important;
+  }
+  #dataPreview {
+    width: 100%;
+    border-collapse: collapse;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+    margin-top: 10px;
+    border-radius: 8px;
+    overflow: hidden;
+    font-family: 'Segoe UI', sans-serif;
+    font-size: 14px;
+  }
+`;
+document.head.appendChild(style);
+
+
+    // Clear any previous results
+    highestRecordContainer.innerHTML = '';
+  };
+  reader.readAsText(file);
+});
+
+// ===============================
+// Train Model Button
+// ===============================
+trainBtn.addEventListener('click', async () => {
+  if (datasetUpload.files.length === 0) {
+    modelMsg.textContent = '⚠️ Please upload a CSV file first!';
+    modelMsg.style.color = 'red';
+    return;
+  }
+
+  const fd = new FormData();
+  fd.append('file', datasetUpload.files[0]);
+
+  try {
+    const r = await fetch("https://dc-fan-backend.onrender.com/train", {
+      method: "POST",
+      body: fd
+    });
+
+    const j = await r.json();
+
+    if (j.ok) {
+      modelMsg.textContent = "✅ Model trained successfully!";
+      modelMsg.style.color = "green";
+    } else {
+      modelMsg.textContent = "❌ Error: " + (j.error || j.message);
+      modelMsg.style.color = "red";
+    }
+  } catch (err) {
+    modelMsg.textContent = err.message;
+    modelMsg.style.color = "red";
+  }
+});
+
+
+
+// ===============================
+// Predict Button
+// ===============================
+predictBtn.addEventListener('click', async () => {
+  const vibrationValue = parseFloat(document.getElementById('vibrationInput').value);
+  const currentValue = parseFloat(document.getElementById('currentInput').value);
+  const speedValue = parseFloat(document.getElementById('speedInput').value);
+
+  try {
+    const res = await fetch("https://dc-fan-backend.onrender.com/predict", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        Vibration: vibrationValue,
+        Current: currentValue,
+        Speed: speedValue
+      })
+    });
+
+    const result = await res.json();
+    if (result.ok) {
+      alert("🔮 Prediction: " + result.prediction);
+    } else {
+      alert("❌ Error: " + result.error);
+    }
+  } catch (err) {
+    alert("⚠️ Connection error: " + err.message);
+  }
+});
+
+
+  // ===============================
+  // Firebase Initialization          
+  // ===============================
+
+   const saveToFirebase = true;
+
+    if (saveToFirebase) {
+      const firebaseConfig = {
+        apiKey: "AIzaSyDudD9EvuN2DR-fBrxz9SubzHctwjmHFBQ",
+        authDomain: "dc-fan-monitor.firebaseapp.com",
+        databaseURL: "https://dc-fan-monitor-default-rtdb.firebaseio.com",
+        projectId: "dc-fan-monitor",
+        storageBucket: "dc-fan-monitor.firebasestorage.app",
+        messagingSenderId: "398046641555",
+        appId: "1:398046641555:web:9d79a62b9616fb4eb53c66",
+        measurementId: "G-419NQ59BDJ"
+      };
+
+      try {
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+        const badge = document.getElementById("fbBadge");
+        if (badge) badge.textContent = "Firebase: ✅ Connected";
+
+        // Save function (can be called for sensor data or uploaded datasets)
+        window.saveDataToFirebase = function (data, source = "sensor") {
+          try {
+            const path = source + "/" + Date.now();
+            db.ref(path).set({
+              timestamp: new Date().toISOString(),
+              data: data
+            });
+            console.log("✅ Data saved to Firebase ("+source+"):", data);
+            if (badge) badge.textContent = "Firebase: ✅ Data saved";
+          } catch (err) {
+            console.error("❌ Error saving data to Firebase:", err);
+            if (badge) badge.textContent = "Firebase: ⚠️ Save error";
+          }
+        };
+
+      } catch (err) {
+        console.error("Firebase init error:", err);
+        const badge = document.getElementById("fbBadge");
+        if (badge) badge.textContent = "Firebase: ❌ Error";
+      }
+    } else {
+      const badge = document.getElementById("fbBadge");
+      if (badge) badge.textContent = "Firebase: disabled";
+    }
+  </script>
+
+  <!-- ===== Predict UI logic - wrapped in DOMContentLoaded ===== -->
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      const predictBtn = document.getElementById("predictBtn");
+      const vibrationInput = document.getElementById("vibrationInput");
+      const currentInput = document.getElementById("currentInput");
+      const speedInput = document.getElementById("speedInput");
+      const predictMsg = document.getElementById("predictMsg");
+
+      // Basic check in case elements not found
+      if (!predictBtn || !vibrationInput || !currentInput || !predictMsg) {
+        console.error("Predict UI elements missing");
+        return;
+      }
+
+      predictBtn.addEventListener("click", async () => {
+        const vib = parseFloat(vibrationInput.value);
+        const curr = parseFloat(currentInput.value);
+        let spd = parseFloat(speedInput.value);
+
+        // Validate inputs
+        if (isNaN(vib) || isNaN(curr)) {
+          predictMsg.textContent = "⚠️ Please enter valid numeric values.";
+          predictMsg.style.color = "red";
+          return;
+        }
+
+        if (isNaN(spd) || spd === 0) spd = 1200; // default speed
+
+        try {
+          ط
+          const data = { ok: true, prediction: (vib > 1 || curr > 2) ? "Fault detected" : "Normal" };
+
+          // Display prediction result
+          if (data.ok) {
+            predictMsg.innerHTML = `
+              <div style="margin-top:15px;padding:12px;border-radius:10px;
+                          background:${data.prediction.includes('Fault') ? '#ffdddd' : '#ddffdd'};
+                          color:${data.prediction.includes('Fault') ? '#d60000' : '#007a00'};
+                          font-weight:600;text-align:center;box-shadow:0 0 8px rgba(0,0,0,0.1)">
+                🔮 Prediction Result:<br>
+                ${data.prediction}
+              </div>`;
+
+            // Save the prediction + input to Firebase (sensor or dataset)
+            if (typeof window.saveDataToFirebase === "function") {
+              // choose source "sensor" or "dataset" as you need
+              window.saveDataToFirebase({
+                Vibration: vib,
+                Current: curr,
+                Speed: spd,
+                Prediction: data.prediction
+              }, "sensor");
+            }
+
+          } else {
+            predictMsg.textContent = "❌ Error: " + (data.error || "Unknown error");
+            predictMsg.style.color = "red";
+          }
+        } catch (err) {
+          predictMsg.textContent = "❌ " + err.message;
+          predictMsg.style.color = "red";
+        }
+      });
+    });
+  </script>
+
+
+</body>
+</html> 
