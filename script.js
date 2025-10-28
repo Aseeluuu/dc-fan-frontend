@@ -604,6 +604,85 @@ async function uploadModelFile(){
   } catch(err){ msg.textContent = err.message; msg.style.color="red" }
 }
 
+
+
+// -------- USB / Offline CSV Live Update Mode --------
+
+// read CSV file and simulate real-time stream
+async function uploadUSBData() {
+  const fileInput = document.getElementById("usbFileInput");
+  const status = document.getElementById("usbStatus");
+
+  if (!fileInput.files[0]) {
+    status.textContent = "Please select a CSV file";
+    status.style.color = "red";
+    return;
+  }
+
+  status.textContent = "Reading USB data...";
+  status.style.color = "black";
+
+  const file = fileInput.files[0];
+  const reader = new FileReader();
+
+  reader.onload = function(e) {
+    const lines = e.target.result.split("\n").map(l => l.trim());
+
+    // CSV header assumed: vibration,current,temperature
+    let index = 1; // skip header row
+    status.textContent = "Streaming USB data...";
+
+    const interval = setInterval(() => {
+      if (index >= lines.length) {
+        clearInterval(interval);
+        status.textContent = "✅ USB Data Stream Finished";
+        status.style.color = "green";
+        return;
+      }
+
+      const row = lines[index].split(",");
+      const v = parseFloat(row[0]);
+      const c = parseFloat(row[1]);
+      const t = parseFloat(row[2]);
+      index++;
+
+      // update real-time chart like live sensor
+      updateChart(v, c, t);
+    }, 800); // simulate 0.8s between readings
+  };
+
+  reader.readAsText(file);
+}
+
+
+// Live mode toggle button logic
+const liveBtn = document.getElementById("liveControlBtn");
+let liveModeEnabled = false;
+
+liveBtn.addEventListener("click", () => {
+  liveModeEnabled = !liveModeEnabled;
+
+  if (liveModeEnabled) {
+    liveBtn.classList.add("active");
+    liveBtn.textContent = "🟢 Live Mode (ON ⚡)";
+    startLiveStreaming(); // Call your real-time function
+  } else {
+    liveBtn.classList.remove("active");
+    liveBtn.textContent = "🔴 Live Mode (OFF 🚫)";
+    stopLiveStreaming(); // Stop your real-time function
+  }
+});
+
+// Dummy functions — replace later with real streaming logic
+function startLiveStreaming(){
+  console.log("✅ Live mode started");
+}
+
+function stopLiveStreaming(){
+  console.log("⛔ Live mode stopped");
+}
+
+
 // ------------- Live polling -------------
 async function refreshLiveData(){
   try {

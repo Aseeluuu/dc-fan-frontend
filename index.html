@@ -65,7 +65,7 @@
   </aside>
    
   <div class="control-row">
-  <button class="btn small power">Power</button>
+<button id="liveControlBtn" class="live-btn">🔴 Live Mode</button>
   <input type="range" min="0" max="255" value="128" class="speed-slider">
   <span class="speed-label">Speed: 128</span>
 </div>
@@ -101,7 +101,6 @@
 
       <!-- SCRIPT -->
   <script>
-
 
 
   // ===============================
@@ -151,6 +150,26 @@
       <div class="card settings-card" style="padding:14px;border-radius:12px;background:var(--card)">
         <label class="form-label">Upload dataset (CSV)</label>
         <input type="file" id="modelDatasetUpload" accept=".csv" class="form-control mb-2">
+        <input type="file" id="sensorCSV" accept=".csv">
+        
+
+        <div class="usb-card">
+
+  <h3>USB / Offline Sensor Data</h3>
+
+  <label>Select CSV file from USB:</label>
+  <input type="file" id="usbFileInput" class="usb-file-input" accept=".csv">
+
+  <div class="usb-btn-box">
+    <button id="startUSBBtn" class="usb-btn" onclick="uploadUSBData()">▶ Start USB Live Mode</button>
+    <button id="stopUSBBtn" class="usb-btn" onclick="stopUSBMode()" disabled>⏹ Stop</button>
+  </div>
+
+  <p id="usbStatus" class="usb-status"></p>
+
+</div>
+
+
         <div style="margin-top:8px">
           <button id="trainModelBtn" class="btn primary" style="background:linear-gradient(90deg,var(--accent-1),var(--accent-2));color:#fff;padding:8px 12px;border-radius:8px;border:none;font-weight:700">Train Model</button>
           <span id="modelMessage" class="upload-message" style="margin-left:10px;font-weight:700"></span>
